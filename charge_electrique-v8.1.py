@@ -5,12 +5,15 @@ import os
 import datetime
 import json
 import shutil
+import urllib.request
+import io
 from collections import defaultdict
 from fpdf import FPDF
+from PIL import Image, ImageTk
 
 # --- Informations sur l'application ---
 APP_NAME = "Suivi de Charge - Voiture Électrique"
-APP_VERSION = "v8.2"
+APP_VERSION = "v8.3"
 APP_DATE = "Août 2026"
 APP_AUTHOR = "Durand Joël"
 APP_EMAIL = "rd66lago@gmail.com"
@@ -20,12 +23,12 @@ DB_FILE = os.path.expanduser("~/.local/share/ReleveVE/.releve_ve_data.db")
 CONFIG_FILE = os.path.expanduser("~/.local/share/ReleveVE/.releve_ve_config.json")
 
 # --- Thème Light "Pure Flat" Adouci (Anti-fatigue visuelle) ---
-BG_COLOR = "#e6ece8"       # Gris-vert pastel très doux pour le fond
-SURFACE_COLOR = "#f0f4f1"  # Blanc cassé sauge
-ACCENT_COLOR = "#9cbfa3"   # Vert sauge doux
-ACCENT_HOVER = "#83a88a"   # Vert sauge un peu plus soutenu
-TEXT_COLOR = "#2d3830"     # Anthracite teinté de vert
-TEXT_MUTED = "#7a8c80"     # Gris-vert moyen
+BG_COLOR = "#e6ece8"       
+SURFACE_COLOR = "#f0f4f1"  
+ACCENT_COLOR = "#9cbfa3"   
+ACCENT_HOVER = "#83a88a"   
+TEXT_COLOR = "#2d3830"     
+TEXT_MUTED = "#7a8c80"     
 DANGER_COLOR = "#e57373"
 WARNING_COLOR = "#f6a855"
 
@@ -39,6 +42,7 @@ class ReleveVEApp:
         self.donnees = []
         self.id_edition = None
         self.filtre_mois_courant = "Tous les mois"
+        self.photo_vehicule = None # Pour éviter que le garbage collector supprime l'image
 
         self.sauvegarde_automatique()
         self.charger_config()
@@ -46,6 +50,7 @@ class ReleveVEApp:
         
         self.creer_menu()
         self.creer_interface()
+        self.charger_image_vehicule()
         self.charger_donnees()
         
         self.root.update()
@@ -59,7 +64,6 @@ class ReleveVEApp:
             os.makedirs(backup_dir, exist_ok=True)
             date_str = datetime.datetime.now().strftime("%Y-%m-%d")
             fichier_backup = os.path.join(backup_dir, f"releve_ve_backup_{date_str}.db")
-            
             try:
                 if not os.path.exists(fichier_backup):
                     shutil.copy2(DB_FILE, fichier_backup)
@@ -68,8 +72,9 @@ class ReleveVEApp:
 
     def charger_config(self):
         self.prix_kwh_defaut = ""
-        self.capacite_batterie = 46.0 # Valeur par défaut
+        self.capacite_batterie = 46.0
         self.vehicule_nom = "Peugeot e-208 (136ch)"
+        self.vehicule_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Peugeot_208_B_e-208_Allure_front_view.jpg/320px-Peugeot_208_B_e-208_Allure_front_view.jpg"
         
         if os.path.exists(CONFIG_FILE):
             try:
@@ -78,31 +83,32 @@ class ReleveVEApp:
                     self.prix_kwh_defaut = str(config.get("prix_kwh", ""))
                     self.capacite_batterie = float(config.get("capacite_batterie", 46.0))
                     self.vehicule_nom = config.get("vehicule_nom", "Peugeot e-208 (136ch)")
+                    self.vehicule_image_url = config.get("vehicule_image_url", self.vehicule_image_url)
             except:
                 pass
 
-    def sauvegarder_config(self, prix, capacite=None, nom=None):
+    def sauvegarder_config(self, prix, capacite=None, nom=None, url_image=None):
         os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
         try:
             if capacite is not None: self.capacite_batterie = capacite
             if nom is not None: self.vehicule_nom = nom
+            if url_image is not None: self.vehicule_image_url = url_image
             
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump({
                     "prix_kwh": prix,
                     "capacite_batterie": self.capacite_batterie,
-                    "vehicule_nom": self.vehicule_nom
+                    "vehicule_nom": self.vehicule_nom,
+                    "vehicule_image_url": self.vehicule_image_url
                 }, f, indent=4)
         except:
             pass
 
     def initialiser_bdd(self):
         os.makedirs(os.path.dirname(DB_FILE), exist_ok=True)
-        
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
-        # --- Table existante des relevés ---
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS releves (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,43 +121,61 @@ class ReleveVEApp:
         
         cursor.execute("PRAGMA table_info(releves)")
         colonnes_existantes = [col[1] for col in cursor.fetchall()]
-        
         if "debut_charge" not in colonnes_existantes:
             cursor.execute("ALTER TABLE releves ADD COLUMN debut_charge REAL DEFAULT 0")
         if "fin_charge" not in colonnes_existantes:
             cursor.execute("ALTER TABLE releves ADD COLUMN fin_charge REAL DEFAULT 0")
 
-        # --- NOUVELLE TABLE : Référentiel des véhicules ---
+        # Table véhicules avec URL d'image
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS modeles_ve (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 marque TEXT,
                 modele TEXT,
-                capacite_utile REAL
+                capacite_utile REAL,
+                image_url TEXT
             )
         ''')
         
-        # Insérer quelques véhicules de référence si la table est vide
+        cursor.execute("PRAGMA table_info(modeles_ve)")
+        cols = [col[1] for col in cursor.fetchall()]
+        if "image_url" not in cols:
+            cursor.execute("ALTER TABLE modeles_ve ADD COLUMN image_url TEXT DEFAULT ''")
+
         cursor.execute("SELECT COUNT(*) FROM modeles_ve")
         if cursor.fetchone()[0] == 0:
             vehicules_ref = [
-                ("Peugeot", "e-208 (136ch)", 46.0),
-                ("Peugeot", "e-208 (156ch)", 48.1),
-                ("Renault", "Zoe ZE50", 52.0),
-                ("Renault", "Megane E-Tech EV60", 60.0),
-                ("Tesla", "Model 3 Propulsion", 57.5),
-                ("Tesla", "Model 3 Grande Autonomie", 75.0),
-                ("Dacia", "Spring", 26.8),
-                ("MG", "MG4 Standard", 51.0)
+                ("Peugeot", "e-208 (136ch)", 46.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Peugeot_208_B_e-208_Allure_front_view.jpg/320px-Peugeot_208_B_e-208_Allure_front_view.jpg"),
+                ("Peugeot", "e-208 (156ch)", 48.1, "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Peugeot_208_B_e-208_Allure_front_view.jpg/320px-Peugeot_208_B_e-208_Allure_front_view.jpg"),
+                ("Renault", "Zoe ZE50", 52.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Renault_Zoe_in_Baden-Baden_28.02.2021.jpg/320px-Renault_Zoe_in_Baden-Baden_28.02.2021.jpg"),
+                ("Renault", "Megane E-Tech", 60.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Renault_Megane_E-Tech_1X7A6263.jpg/320px-Renault_Megane_E-Tech_1X7A6263.jpg"),
+                ("Tesla", "Model 3 Prop.", 57.5, "https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/2019_Tesla_Model_3_Performance_AWD_Front.jpg/320px-2019_Tesla_Model_3_Performance_AWD_Front.jpg"),
+                ("Dacia", "Spring", 26.8, "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Dacia_Spring_1X7A6107.jpg/320px-Dacia_Spring_1X7A6107.jpg"),
+                ("MG", "MG4 Standard", 51.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/MG_4_EV_Excite_Front.jpg/320px-MG_4_EV_Excite_Front.jpg")
             ]
-            cursor.executemany("INSERT INTO modeles_ve (marque, modele, capacite_utile) VALUES (?, ?, ?)", vehicules_ref)
+            cursor.executemany("INSERT INTO modeles_ve (marque, modele, capacite_utile, image_url) VALUES (?, ?, ?, ?)", vehicules_ref)
 
         conn.commit()
         conn.close()
 
+    def charger_image_vehicule(self):
+        url = self.vehicule_image_url
+        if url:
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                raw_data = urllib.request.urlopen(req, timeout=3).read()
+                im = Image.open(io.BytesIO(raw_data))
+                # Redimensionnement tout en gardant le ratio
+                im.thumbnail((160, 100), Image.Resampling.LANCZOS)
+                self.photo_vehicule = ImageTk.PhotoImage(im)
+                self.lbl_image.config(image=self.photo_vehicule, text="")
+            except Exception as e:
+                self.lbl_image.config(image='', text="🚗", font=("Arial", 40))
+        else:
+            self.lbl_image.config(image='', text="🚗", font=("Arial", 40))
+
     def creer_menu(self):
         menubar = tk.Menu(self.root, bg=SURFACE_COLOR, fg=TEXT_COLOR, bd=0, relief=tk.FLAT)
-        
         menu_fichier = tk.Menu(menubar, tearoff=0, bg=SURFACE_COLOR, fg=TEXT_COLOR, bd=0, relief=tk.FLAT)
         menu_fichier.add_command(label="Éditer Modèle Vierge PDF", command=self.generer_modele_vierge)
         menu_fichier.add_command(label="Exporter la vue actuelle en PDF", command=self.exporter_pdf)
@@ -170,38 +194,39 @@ class ReleveVEApp:
     def ouvrir_parametres(self):
         win_param = tk.Toplevel(self.root)
         win_param.title("Paramètres du véhicule")
-        win_param.geometry("400x300")
+        win_param.geometry("450x380")
         win_param.configure(bg=SURFACE_COLOR)
         
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 200
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 150
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 225
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 190
         win_param.geometry(f"+{x}+{y}")
-        
         win_param.transient(self.root)
         win_param.grab_set()
 
         tk.Label(win_param, text="Sélectionnez votre véhicule :", bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 11, "bold")).pack(pady=(20, 5))
 
-        # Récupération des véhicules depuis la BDD
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute("SELECT marque, modele, capacite_utile FROM modeles_ve ORDER BY marque, modele")
+        cursor.execute("SELECT marque, modele, capacite_utile, image_url FROM modeles_ve ORDER BY marque, modele")
         vehicules = cursor.fetchall()
         conn.close()
 
-        # Formatage pour la combobox
         liste_noms = [f"{v[0]} {v[1]} ({v[2]} kWh)" for v in vehicules]
         liste_noms.append("Saisie manuelle...")
         
-        combo_vehicules = ttk.Combobox(win_param, values=liste_noms, state="readonly", width=35)
+        combo_vehicules = ttk.Combobox(win_param, values=liste_noms, state="readonly", width=40)
         combo_vehicules.pack(pady=10)
         
         frame_manuel = tk.Frame(win_param, bg=SURFACE_COLOR)
-        tk.Label(frame_manuel, text="Capacité utile (kWh) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).pack(side=tk.LEFT)
+        
+        tk.Label(frame_manuel, text="Capacité utile (kWh) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).grid(row=0, column=0, sticky="e", pady=5)
         ent_capacite = tk.Entry(frame_manuel, width=10, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
-        ent_capacite.pack(side=tk.LEFT, padx=5)
+        ent_capacite.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        
+        tk.Label(frame_manuel, text="URL Image (Optionnel) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).grid(row=1, column=0, sticky="e", pady=5)
+        ent_url = tk.Entry(frame_manuel, width=30, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
+        ent_url.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
-        # Pré-sélection
         index_trouve = -1
         for i, nom in enumerate(liste_noms):
             if self.vehicule_nom in nom:
@@ -213,6 +238,7 @@ class ReleveVEApp:
         else:
             combo_vehicules.set("Saisie manuelle...")
             ent_capacite.insert(0, str(self.capacite_batterie))
+            ent_url.insert(0, self.vehicule_image_url)
             frame_manuel.pack(pady=10)
 
         def sur_changement(event):
@@ -220,6 +246,8 @@ class ReleveVEApp:
                 frame_manuel.pack(pady=10)
                 ent_capacite.delete(0, tk.END)
                 ent_capacite.insert(0, str(self.capacite_batterie))
+                ent_url.delete(0, tk.END)
+                ent_url.insert(0, self.vehicule_image_url)
             else:
                 frame_manuel.pack_forget()
 
@@ -230,17 +258,23 @@ class ReleveVEApp:
             if choix == "Saisie manuelle...":
                 try:
                     nouvelle_cap = float(ent_capacite.get().replace(',', '.'))
-                    self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom="Véhicule personnalisé")
+                    nouvelle_url = ent_url.get()
+                    self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom="Véhicule personnalisé", url_image=nouvelle_url)
                 except ValueError:
                     messagebox.showwarning("Erreur", "Veuillez saisir une capacité valide.", parent=win_param)
                     return
             else:
                 idx = combo_vehicules.current()
                 nouvelle_cap = vehicules[idx][2]
+                nouvelle_url = vehicules[idx][3]
                 nom_vehicule = f"{vehicules[idx][0]} {vehicules[idx][1]}"
-                self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom=nom_vehicule)
+                self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom=nom_vehicule, url_image=nouvelle_url)
             
-            # Forcer le recalcul du tableau avec la nouvelle capacité
+            # Mise à jour de l'UI
+            self.lbl_nom_vehicule.config(text=self.vehicule_nom)
+            self.lbl_cap_vehicule.config(text=f"Capacité utile : {self.capacite_batterie} kWh")
+            self.charger_image_vehicule()
+            
             self.recalculer_donnees()
             self.afficher_donnees()
             win_param.destroy()
@@ -250,12 +284,12 @@ class ReleveVEApp:
     def afficher_a_propos(self, startup=False):
         win_propos = tk.Toplevel(self.root)
         win_propos.title("À propos")
-        win_propos.geometry("520x440")
+        win_propos.geometry("560x540")
         win_propos.configure(bg=SURFACE_COLOR)
         win_propos.overrideredirect(True) 
         
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 260
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 220
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 280
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 270
         win_propos.geometry(f"+{x}+{y}")
         
         win_propos.transient(self.root)
@@ -273,14 +307,17 @@ class ReleveVEApp:
         explication = (
             "Cette application permet d'enregistrer et d'analyser vos recharges "
             "de véhicule électrique en toute simplicité :\n\n"
+            "Nouveautés Récentes :\n"
+            "  • [v8.3] Refonte du tableau de bord avec affichage de la photo et des détails du véhicule.\n"
+            "  • [v8.2] Base de données multi-véhicules intégrée.\n"
+            "  • [v8.2] Calcul de consommation (kWh/100km) ultra-précis basé sur la capacité utile de la batterie du véhicule sélectionné.\n\n"
+            "Fonctionnalités de base :\n"
             "  • Saisie du taux de charge initial et final (en %)\n"
-            "  • Calcul automatique de la consommation basé sur la capacité de la batterie (kWh/100km)\n"
             "  • Filtrage des relevés par mois avec statistiques adaptées\n"
             "  • Graphiques interactifs détaillés\n"
             "  • Exportation PDF automatique de la période sélectionnée\n"
-            "  • Sauvegarde locale sécurisée dans votre répertoire personnel\n\n"
         )
-        tk.Label(frame_desc, text=explication, bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 10), justify=tk.LEFT, wraplength=460).pack(anchor="w")
+        tk.Label(frame_desc, text=explication, bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 10), justify=tk.LEFT, wraplength=500).pack(anchor="w")
 
         btn_ok = tk.Button(frame_desc, text="OK, Accéder à l'application", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, bd=0, font=("Arial", 10, "bold"), command=win_propos.destroy, padx=20, pady=5)
         btn_ok.pack(pady=20)
@@ -297,10 +334,31 @@ class ReleveVEApp:
     def creer_interface(self):
         style = ttk.Style()
         style.theme_use("clam")
-        
         style.configure("Treeview", background=SURFACE_COLOR, foreground=TEXT_COLOR, fieldbackground=SURFACE_COLOR, borderwidth=0)
         style.map('Treeview', background=[('selected', ACCENT_HOVER)], foreground=[('selected', SURFACE_COLOR)])
         style.configure("Treeview.Heading", background=BG_COLOR, foreground=TEXT_COLOR, font=("Arial", 10, "bold"), borderwidth=0, relief=tk.FLAT)
+
+        # --- 0. En-tête (Header) Info Véhicule ---
+        frame_header = tk.Frame(self.root, bg=BG_COLOR, bd=0)
+        frame_header.pack(fill=tk.X, padx=10, pady=(10, 5))
+        
+        frame_info = tk.Frame(frame_header, bg=SURFACE_COLOR, bd=0)
+        frame_info.pack(fill=tk.X)
+        
+        self.lbl_image = tk.Label(frame_info, bg=SURFACE_COLOR, text="🚗", font=("Arial", 40), width=160)
+        self.lbl_image.pack(side=tk.LEFT, padx=(10, 15), pady=10)
+        
+        frame_texte_vehicule = tk.Frame(frame_info, bg=SURFACE_COLOR)
+        frame_texte_vehicule.pack(side=tk.LEFT, fill=tk.Y, pady=20)
+        
+        self.lbl_nom_vehicule = tk.Label(frame_texte_vehicule, text=self.vehicule_nom, bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 16, "bold"))
+        self.lbl_nom_vehicule.pack(anchor="w")
+        
+        self.lbl_cap_vehicule = tk.Label(frame_texte_vehicule, text=f"Capacité utile : {self.capacite_batterie} kWh", bg=SURFACE_COLOR, fg=TEXT_MUTED, font=("Arial", 11))
+        self.lbl_cap_vehicule.pack(anchor="w", pady=(5,0))
+        
+        btn_changer = tk.Button(frame_info, text="⚙️ Changer de véhicule", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, font=("Arial", 9, "bold"), command=self.ouvrir_parametres, padx=10, pady=5)
+        btn_changer.pack(side=tk.RIGHT, padx=20)
 
         # --- 1. Zone des 2 Graphiques (En haut) ---
         frame_graphiques = tk.Frame(self.root, bg=BG_COLOR)
@@ -317,7 +375,7 @@ class ReleveVEApp:
         self.combo_mois_gauche.pack(side=tk.LEFT)
         self.combo_mois_gauche.bind("<<ComboboxSelected>>", lambda e: self.dessiner_graphiques())
         
-        self.canvas_gauche = tk.Canvas(frame_gauche, bg=SURFACE_COLOR, height=190, bd=0, highlightthickness=0)
+        self.canvas_gauche = tk.Canvas(frame_gauche, bg=SURFACE_COLOR, height=170, bd=0, highlightthickness=0)
         self.canvas_gauche.pack(fill=tk.BOTH, expand=True)
         
         self.lbl_total_gauche = tk.Label(frame_gauche, text="Total Charge : -- kWh | Prix : -- €", bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold"))
@@ -327,7 +385,7 @@ class ReleveVEApp:
         frame_droite.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
         tk.Label(frame_droite, text="Évolution de la conso. mois par mois (kWh/100km)", bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold")).pack(pady=(5, 2))
         
-        self.canvas_droite = tk.Canvas(frame_droite, bg=SURFACE_COLOR, height=190, bd=0, highlightthickness=0)
+        self.canvas_droite = tk.Canvas(frame_droite, bg=SURFACE_COLOR, height=170, bd=0, highlightthickness=0)
         self.canvas_droite.pack(fill=tk.BOTH, expand=True)
         
         self.lbl_total_droite = tk.Label(frame_droite, text="Total Charge : -- kWh | Prix : -- €", bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold"))
@@ -336,18 +394,11 @@ class ReleveVEApp:
         self.canvas_gauche.bind("<Configure>", lambda e: self.dessiner_graphiques())
         self.canvas_droite.bind("<Configure>", lambda e: self.dessiner_graphiques())
 
-        # --- 2. Ligne de Saisie (Sous les graphiques) ---
+        # --- 2. Ligne de Saisie ---
         frame_saisie = tk.Frame(self.root, bg=SURFACE_COLOR, bd=0, highlightthickness=0)
         frame_saisie.pack(fill=tk.X, padx=10, pady=10)
 
-        entry_kwargs = {
-            "bg": BG_COLOR, 
-            "fg": TEXT_COLOR, 
-            "insertbackground": TEXT_COLOR, 
-            "relief": tk.FLAT, 
-            "bd": 0, 
-            "highlightthickness": 0
-        }
+        entry_kwargs = {"bg": BG_COLOR, "fg": TEXT_COLOR, "insertbackground": TEXT_COLOR, "relief": tk.FLAT, "bd": 0, "highlightthickness": 0}
 
         tk.Label(frame_saisie, text="Date :", bg=SURFACE_COLOR, fg=TEXT_COLOR).grid(row=0, column=0, padx=3, pady=12, sticky="e")
         self.ent_date = tk.Entry(frame_saisie, width=10, **entry_kwargs)
@@ -376,18 +427,18 @@ class ReleveVEApp:
         if self.prix_kwh_defaut:
             self.ent_prix_kwh.insert(0, self.prix_kwh_defaut)
 
-        self.btn_ajouter = tk.Button(frame_saisie, text="Ajouter", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, bd=0, highlightthickness=0, font=("Arial", 10, "bold"), command=self.valider_saisie)
+        self.btn_ajouter = tk.Button(frame_saisie, text="Ajouter", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, bd=0, font=("Arial", 10, "bold"), command=self.valider_saisie)
         self.btn_ajouter.grid(row=0, column=12, padx=(10, 3), pady=12)
 
-        self.btn_annuler = tk.Button(frame_saisie, text="X", bg=DANGER_COLOR, fg="white", relief=tk.FLAT, bd=0, highlightthickness=0, font=("Arial", 10, "bold"), command=self.reinitialiser_formulaire)
+        self.btn_annuler = tk.Button(frame_saisie, text="X", bg=DANGER_COLOR, fg="white", relief=tk.FLAT, bd=0, font=("Arial", 10, "bold"), command=self.reinitialiser_formulaire)
         self.btn_annuler.grid(row=0, column=13, padx=(2, 10), pady=12)
         self.btn_annuler.grid_remove()
 
-        # --- 3. Barre de filtrage et Tableau (En bas) ---
+        # --- 3. Barre de filtrage et Tableau ---
         frame_filtre = tk.Frame(self.root, bg=BG_COLOR)
         frame_filtre.pack(fill=tk.X, padx=10, pady=(10, 5))
 
-        tk.Label(frame_filtre, text="🔍 Filtrer le tableau & l'export PDF :", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(5, 5))
+        tk.Label(frame_filtre, text="🔍 Filtrer le tableau :", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=(5, 5))
         
         self.combo_mois = ttk.Combobox(frame_filtre, state="readonly", width=15)
         self.combo_mois.pack(side=tk.LEFT, padx=5)
@@ -397,7 +448,7 @@ class ReleveVEApp:
         btn_reset_filtre.pack(side=tk.LEFT, padx=5)
 
         colonnes = ("date", "debut_charge", "fin_charge", "charge", "prix_kwh", "km", "conso_moyenne", "cout_total")
-        self.tree = ttk.Treeview(self.root, columns=colonnes, show="headings", height=10)
+        self.tree = ttk.Treeview(self.root, columns=colonnes, show="headings", height=8)
         self.tree.heading("date", text="Date")
         self.tree.heading("debut_charge", text="Début (%)")
         self.tree.heading("fin_charge", text="Fin (%)")
@@ -423,8 +474,8 @@ class ReleveVEApp:
         self.tree.bind("<Delete>", lambda e: self.supprimer_releve())
 
         self.menu_contextuel = tk.Menu(self.root, tearoff=0, bg=SURFACE_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
-        self.menu_contextuel.add_command(label="✏️ Modifier ce relevé", command=self.preparer_modification)
-        self.menu_contextuel.add_command(label="🗑️ Supprimer ce relevé", command=self.supprimer_releve)
+        self.menu_contextuel.add_command(label="✏️ Modifier", command=self.preparer_modification)
+        self.menu_contextuel.add_command(label="🗑️ Supprimer", command=self.supprimer_releve)
 
         self.actualiser_liste_mois()
         self.afficher_donnees()
@@ -618,7 +669,6 @@ class ReleveVEApp:
                 if distance > 0 and fin_charge_prec > 0:
                     pourcentage_consomme = fin_charge_prec - debut_charge_actuel
                     if pourcentage_consomme > 0:
-                        # Utilisation de la capacité dynamique configurée
                         kwh_consommes = self.capacite_batterie * (pourcentage_consomme / 100.0)
                         self.donnees[i]["conso_100km"] = round((kwh_consommes / distance) * 100, 2)
                     else:
@@ -670,7 +720,7 @@ class ReleveVEApp:
         mois_choisi = self.combo_mois_gauche.get()
         
         if not mois_choisi:
-            self.canvas_gauche.create_text(250, 90, text="Sélectionnez un mois pour voir les jours", fill=TEXT_MUTED, font=("Arial", 11, "italic"))
+            self.canvas_gauche.create_text(250, 80, text="Sélectionnez un mois pour voir les jours", fill=TEXT_MUTED, font=("Arial", 11, "italic"))
             self.lbl_total_gauche.config(text="Total Charge : -- kWh  |  Total Prix : -- €")
             return
 
@@ -690,12 +740,12 @@ class ReleveVEApp:
         self.lbl_total_gauche.config(text=f"Total Charge : {total_charge:.2f} kWh  |  Total Prix : {total_prix:.2f} €")
         
         if not data_jours:
-            self.canvas_gauche.create_text(250, 90, text="Aucune donnée pour ce mois", fill=TEXT_MUTED, font=("Arial", 11, "italic"))
+            self.canvas_gauche.create_text(250, 80, text="Aucune donnée pour ce mois", fill=TEXT_MUTED, font=("Arial", 11, "italic"))
             return
 
         largeur, hauteur = self.canvas_gauche.winfo_width(), self.canvas_gauche.winfo_height()
         if largeur <= 1: largeur = 500
-        if hauteur <= 1: hauteur = 190
+        if hauteur <= 1: hauteur = 170
 
         marge_x, marge_y = 30, 30
         zone_l, zone_h = largeur - 2 * marge_x, hauteur - 2 * marge_y
@@ -734,12 +784,12 @@ class ReleveVEApp:
         cles_mois = list(data_mois.keys())
 
         if len(cles_mois) < 1:
-            self.canvas_droite.create_text(250, 90, text="Ajoutez des relevés pour voir la courbe", fill=TEXT_MUTED, font=("Arial", 11, "italic"))
+            self.canvas_droite.create_text(250, 80, text="Ajoutez des relevés pour voir la courbe", fill=TEXT_MUTED, font=("Arial", 11, "italic"))
             return
 
         largeur, hauteur = self.canvas_droite.winfo_width(), self.canvas_droite.winfo_height()
         if largeur <= 1: largeur = 500
-        if hauteur <= 1: hauteur = 190
+        if hauteur <= 1: hauteur = 170
 
         marge_x, marge_y = 40, 30
         zone_dessin_l, zone_dessin_h = largeur - 2 * marge_x, hauteur - 2 * marge_y
