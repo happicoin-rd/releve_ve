@@ -479,23 +479,46 @@ class ReleveVEApp:
             self.afficher_donnees()
 
     def recalculer_donnees(self):
+        # Capacité utile estimée de la batterie (en kWh)
+        # La Peugeot e-208 classique (136 ch) a une capacité utile d'environ 46.0 kWh.
+        # (Si vous possédez le nouveau modèle 156 ch, passez cette valeur à 48.1)
+        CAPACITE_BATTERIE = 46.0 
+
         for i in range(len(self.donnees)):
-            charge = float(self.donnees[i]["charge"])
+            # 1. Calcul du coût de la recharge (inchangé, basé sur le compteur)
+            charge_injectee = float(self.donnees[i]["charge"])
             prix_kwh = float(self.donnees[i]["prix_kwh"])
-            cout_total = round(charge * prix_kwh, 2)
+            cout_total = round(charge_injectee * prix_kwh, 2)
             self.donnees[i]["cout_total"] = cout_total
             
+            # 2. Calcul de la consommation aux 100 km
             if i == 0:
                 self.donnees[i]["conso_100km"] = "N/A"
             else:
                 km_actuel = float(self.donnees[i]["km"])
                 km_prec = float(self.donnees[i-1]["km"])
                 distance = km_actuel - km_prec
-                if distance > 0:
-                    self.donnees[i]["conso_100km"] = round((charge / distance) * 100, 2)
+                
+                # On récupère le % de fin de la charge précédente et le % de début actuel
+                fin_charge_prec = float(self.donnees[i-1].get("fin_charge", 0))
+                debut_charge_actuel = float(self.donnees[i].get("debut_charge", 0))
+                
+                if distance > 0 and fin_charge_prec > 0:
+                    # Pourcentage de batterie qui a été vidé en roulant
+                    pourcentage_consomme = fin_charge_prec - debut_charge_actuel
+                    
+                    if pourcentage_consomme > 0:
+                        # Conversion de ce pourcentage en kWh physiques (énergie du véhicule)
+                        kwh_consommes = CAPACITE_BATTERIE * (pourcentage_consomme / 100.0)
+                        
+                        # Calcul de la moyenne aux 100 km
+                        conso_moyenne = (kwh_consommes / distance) * 100
+                        self.donnees[i]["conso_100km"] = round(conso_moyenne, 2)
+                    else:
+                        self.donnees[i]["conso_100km"] = "N/A"
                 else:
                     self.donnees[i]["conso_100km"] = "N/A"
-
+                    
     def afficher_donnees(self):
         for item in self.tree.get_children():
             self.tree.delete(item)
