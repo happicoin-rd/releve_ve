@@ -14,6 +14,9 @@ de véhicule électrique en toute simplicité :
 
     • Sauvegarde locale sécurisée dans votre répertoire personnel
 
+    • Dans le menu ajout d'une base de données des véhicules les plus connus et possibilités d'en ajouter d'autres
+
+
     ## 🚀 Prochaines versions (Roadmap)
 
 - [ ] **Environnement Python :** Réécriture du calcul de la consommation kWh/100km erronée).
