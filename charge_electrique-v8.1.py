@@ -10,7 +10,7 @@ from fpdf import FPDF
 
 # --- Informations sur l'application ---
 APP_NAME = "Suivi de Charge - Voiture Électrique"
-APP_VERSION = "v8.1"
+APP_VERSION = "v8.2"
 APP_DATE = "Août 2026"
 APP_AUTHOR = "Durand Joël"
 APP_EMAIL = "rd66lago@gmail.com"
@@ -38,7 +38,6 @@ class ReleveVEApp:
 
         self.donnees = []
         self.id_edition = None
-        self.prix_kwh_defaut = ""
         self.filtre_mois_courant = "Tous les mois"
 
         self.sauvegarde_automatique()
@@ -68,19 +67,32 @@ class ReleveVEApp:
                 print(f"Erreur de sauvegarde : {e}")
 
     def charger_config(self):
+        self.prix_kwh_defaut = ""
+        self.capacite_batterie = 46.0 # Valeur par défaut
+        self.vehicule_nom = "Peugeot e-208 (136ch)"
+        
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     config = json.load(f)
                     self.prix_kwh_defaut = str(config.get("prix_kwh", ""))
+                    self.capacite_batterie = float(config.get("capacite_batterie", 46.0))
+                    self.vehicule_nom = config.get("vehicule_nom", "Peugeot e-208 (136ch)")
             except:
                 pass
 
-    def sauvegarder_config(self, prix):
+    def sauvegarder_config(self, prix, capacite=None, nom=None):
         os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
         try:
+            if capacite is not None: self.capacite_batterie = capacite
+            if nom is not None: self.vehicule_nom = nom
+            
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump({"prix_kwh": prix}, f, indent=4)
+                json.dump({
+                    "prix_kwh": prix,
+                    "capacite_batterie": self.capacite_batterie,
+                    "vehicule_nom": self.vehicule_nom
+                }, f, indent=4)
         except:
             pass
 
@@ -89,6 +101,8 @@ class ReleveVEApp:
         
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
+        
+        # --- Table existante des relevés ---
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS releves (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +121,31 @@ class ReleveVEApp:
         if "fin_charge" not in colonnes_existantes:
             cursor.execute("ALTER TABLE releves ADD COLUMN fin_charge REAL DEFAULT 0")
 
+        # --- NOUVELLE TABLE : Référentiel des véhicules ---
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS modeles_ve (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                marque TEXT,
+                modele TEXT,
+                capacite_utile REAL
+            )
+        ''')
+        
+        # Insérer quelques véhicules de référence si la table est vide
+        cursor.execute("SELECT COUNT(*) FROM modeles_ve")
+        if cursor.fetchone()[0] == 0:
+            vehicules_ref = [
+                ("Peugeot", "e-208 (136ch)", 46.0),
+                ("Peugeot", "e-208 (156ch)", 48.1),
+                ("Renault", "Zoe ZE50", 52.0),
+                ("Renault", "Megane E-Tech EV60", 60.0),
+                ("Tesla", "Model 3 Propulsion", 57.5),
+                ("Tesla", "Model 3 Grande Autonomie", 75.0),
+                ("Dacia", "Spring", 26.8),
+                ("MG", "MG4 Standard", 51.0)
+            ]
+            cursor.executemany("INSERT INTO modeles_ve (marque, modele, capacite_utile) VALUES (?, ?, ?)", vehicules_ref)
+
         conn.commit()
         conn.close()
 
@@ -117,6 +156,8 @@ class ReleveVEApp:
         menu_fichier.add_command(label="Éditer Modèle Vierge PDF", command=self.generer_modele_vierge)
         menu_fichier.add_command(label="Exporter la vue actuelle en PDF", command=self.exporter_pdf)
         menu_fichier.add_separator()
+        menu_fichier.add_command(label="Paramètres du véhicule...", command=self.ouvrir_parametres)
+        menu_fichier.add_separator()
         menu_fichier.add_command(label="Quitter", command=self.root.quit)
         menubar.add_cascade(label="Fichier", menu=menu_fichier)
         
@@ -125,6 +166,86 @@ class ReleveVEApp:
         menubar.add_cascade(label="?", menu=menu_aide)
 
         self.root.config(menu=menubar)
+        
+    def ouvrir_parametres(self):
+        win_param = tk.Toplevel(self.root)
+        win_param.title("Paramètres du véhicule")
+        win_param.geometry("400x300")
+        win_param.configure(bg=SURFACE_COLOR)
+        
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 200
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 150
+        win_param.geometry(f"+{x}+{y}")
+        
+        win_param.transient(self.root)
+        win_param.grab_set()
+
+        tk.Label(win_param, text="Sélectionnez votre véhicule :", bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 11, "bold")).pack(pady=(20, 5))
+
+        # Récupération des véhicules depuis la BDD
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT marque, modele, capacite_utile FROM modeles_ve ORDER BY marque, modele")
+        vehicules = cursor.fetchall()
+        conn.close()
+
+        # Formatage pour la combobox
+        liste_noms = [f"{v[0]} {v[1]} ({v[2]} kWh)" for v in vehicules]
+        liste_noms.append("Saisie manuelle...")
+        
+        combo_vehicules = ttk.Combobox(win_param, values=liste_noms, state="readonly", width=35)
+        combo_vehicules.pack(pady=10)
+        
+        frame_manuel = tk.Frame(win_param, bg=SURFACE_COLOR)
+        tk.Label(frame_manuel, text="Capacité utile (kWh) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).pack(side=tk.LEFT)
+        ent_capacite = tk.Entry(frame_manuel, width=10, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
+        ent_capacite.pack(side=tk.LEFT, padx=5)
+
+        # Pré-sélection
+        index_trouve = -1
+        for i, nom in enumerate(liste_noms):
+            if self.vehicule_nom in nom:
+                index_trouve = i
+                break
+                
+        if index_trouve >= 0:
+            combo_vehicules.current(index_trouve)
+        else:
+            combo_vehicules.set("Saisie manuelle...")
+            ent_capacite.insert(0, str(self.capacite_batterie))
+            frame_manuel.pack(pady=10)
+
+        def sur_changement(event):
+            if combo_vehicules.get() == "Saisie manuelle...":
+                frame_manuel.pack(pady=10)
+                ent_capacite.delete(0, tk.END)
+                ent_capacite.insert(0, str(self.capacite_batterie))
+            else:
+                frame_manuel.pack_forget()
+
+        combo_vehicules.bind("<<ComboboxSelected>>", sur_changement)
+
+        def sauvegarder():
+            choix = combo_vehicules.get()
+            if choix == "Saisie manuelle...":
+                try:
+                    nouvelle_cap = float(ent_capacite.get().replace(',', '.'))
+                    self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom="Véhicule personnalisé")
+                except ValueError:
+                    messagebox.showwarning("Erreur", "Veuillez saisir une capacité valide.", parent=win_param)
+                    return
+            else:
+                idx = combo_vehicules.current()
+                nouvelle_cap = vehicules[idx][2]
+                nom_vehicule = f"{vehicules[idx][0]} {vehicules[idx][1]}"
+                self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom=nom_vehicule)
+            
+            # Forcer le recalcul du tableau avec la nouvelle capacité
+            self.recalculer_donnees()
+            self.afficher_donnees()
+            win_param.destroy()
+
+        tk.Button(win_param, text="Sauvegarder", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, bd=0, font=("Arial", 10, "bold"), command=sauvegarder, padx=15, pady=5).pack(pady=20)
 
     def afficher_a_propos(self, startup=False):
         win_propos = tk.Toplevel(self.root)
@@ -153,7 +274,7 @@ class ReleveVEApp:
             "Cette application permet d'enregistrer et d'analyser vos recharges "
             "de véhicule électrique en toute simplicité :\n\n"
             "  • Saisie du taux de charge initial et final (en %)\n"
-            #"  • Calcul automatique du coût et de la consommation (kWh/100km)\n" a refaire
+            "  • Calcul automatique de la consommation basé sur la capacité de la batterie (kWh/100km)\n"
             "  • Filtrage des relevés par mois avec statistiques adaptées\n"
             "  • Graphiques interactifs détaillés\n"
             "  • Exportation PDF automatique de la période sélectionnée\n"
@@ -479,19 +600,11 @@ class ReleveVEApp:
             self.afficher_donnees()
 
     def recalculer_donnees(self):
-        # Capacité utile estimée de la batterie (en kWh)
-        # La Peugeot e-208 classique (136 ch) a une capacité utile d'environ 46.0 kWh.
-        # (Si vous possédez le nouveau modèle 156 ch, passez cette valeur à 48.1)
-        CAPACITE_BATTERIE = 46.0 
-
         for i in range(len(self.donnees)):
-            # 1. Calcul du coût de la recharge (inchangé, basé sur le compteur)
-            charge_injectee = float(self.donnees[i]["charge"])
+            charge = float(self.donnees[i]["charge"])
             prix_kwh = float(self.donnees[i]["prix_kwh"])
-            cout_total = round(charge_injectee * prix_kwh, 2)
-            self.donnees[i]["cout_total"] = cout_total
+            self.donnees[i]["cout_total"] = round(charge * prix_kwh, 2)
             
-            # 2. Calcul de la consommation aux 100 km
             if i == 0:
                 self.donnees[i]["conso_100km"] = "N/A"
             else:
@@ -499,26 +612,20 @@ class ReleveVEApp:
                 km_prec = float(self.donnees[i-1]["km"])
                 distance = km_actuel - km_prec
                 
-                # On récupère le % de fin de la charge précédente et le % de début actuel
                 fin_charge_prec = float(self.donnees[i-1].get("fin_charge", 0))
                 debut_charge_actuel = float(self.donnees[i].get("debut_charge", 0))
                 
                 if distance > 0 and fin_charge_prec > 0:
-                    # Pourcentage de batterie qui a été vidé en roulant
                     pourcentage_consomme = fin_charge_prec - debut_charge_actuel
-                    
                     if pourcentage_consomme > 0:
-                        # Conversion de ce pourcentage en kWh physiques (énergie du véhicule)
-                        kwh_consommes = CAPACITE_BATTERIE * (pourcentage_consomme / 100.0)
-                        
-                        # Calcul de la moyenne aux 100 km
-                        conso_moyenne = (kwh_consommes / distance) * 100
-                        self.donnees[i]["conso_100km"] = round(conso_moyenne, 2)
+                        # Utilisation de la capacité dynamique configurée
+                        kwh_consommes = self.capacite_batterie * (pourcentage_consomme / 100.0)
+                        self.donnees[i]["conso_100km"] = round((kwh_consommes / distance) * 100, 2)
                     else:
                         self.donnees[i]["conso_100km"] = "N/A"
                 else:
                     self.donnees[i]["conso_100km"] = "N/A"
-                    
+
     def afficher_donnees(self):
         for item in self.tree.get_children():
             self.tree.delete(item)
@@ -736,8 +843,6 @@ class ReleveVEApp:
             pdf.cell(40, 10, "Charge (kWh)", 1, 0, 'C', fill=True)
             pdf.cell(70, 10, "Kilometrage", 1, 1, 'C', fill=True)
         else:
-            # Les largeurs ont été augmentées pour atteindre un total exact de 190 mm 
-            # afin que le tableau remplisse bien l'espace et soit parfaitement centré.
             pdf.cell(25, 10, "Date", 1, 0, 'C', fill=True)
             pdf.cell(20, 10, "Debut", 1, 0, 'C', fill=True)
             pdf.cell(20, 10, "Fin", 1, 0, 'C', fill=True)
@@ -775,17 +880,9 @@ class ReleveVEApp:
             pdf.set_font("Arial", 'B', 10)
             pdf.set_fill_color(220, 220, 220)
             
-            # Alignement géométrique de la ligne des totaux avec les colonnes supérieures :
-            # Cellule 1 : Couvre "Date" (25) + "Debut" (20) + "Fin" (20) = 65
             pdf.cell(45, 10, "TOTAUX :", 1, 0, 'R', fill=True)
-            
-            # Cellule 2 : Couvre "Charge" (25)
             pdf.cell(25, 10, f"{totaux[0]:.2f} kWh", 1, 0, 'C', fill=True)
-            
-            # Cellule 3 : Espace vide qui couvre "Prix kWh" (20) + "Kilometrage" (40) = 60
             pdf.cell(10, 10, "", 1, 0, 'C', fill=True) 
-            
-            # Cellule 4 : Couvre "Cout Total" (40)
             pdf.cell(110, 10, f"{totaux[1]:.2f} Euro (Hors taxes)", 1, 1, 'C', fill=True)
 
         pdf.output(filepath)
