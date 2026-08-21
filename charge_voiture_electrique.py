@@ -145,7 +145,6 @@ class ReleveVEApp:
             "Cette application permet d'enregistrer et d'analyser vos recharges "
             "de véhicule électrique en toute simplicité :\n\n"
             "  • Saisie du taux de charge initial et final (en %)\n"
-            "  • Calcul automatique du coût et de la consommation (kWh/100km)\n"
             "  • Filtrage des relevés par mois avec statistiques adaptées\n"
             "  • Graphiques mensuels (courbe d'évolution et histogramme annuel horizontal)\n"
             "  • Exportation PDF automatique dans le dossier Documents\n"
