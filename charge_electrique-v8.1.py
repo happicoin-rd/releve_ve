@@ -7,6 +7,7 @@ import json
 import shutil
 import urllib.request
 import io
+import webbrowser
 from collections import defaultdict
 from fpdf import FPDF
 from PIL import Image, ImageTk
@@ -42,7 +43,7 @@ class ReleveVEApp:
         self.donnees = []
         self.id_edition = None
         self.filtre_mois_courant = "Tous les mois"
-        self.photo_vehicule = None # Pour éviter que le garbage collector supprime l'image
+        self.photo_vehicule = None 
 
         self.sauvegarde_automatique()
         self.charger_config()
@@ -126,7 +127,6 @@ class ReleveVEApp:
         if "fin_charge" not in colonnes_existantes:
             cursor.execute("ALTER TABLE releves ADD COLUMN fin_charge REAL DEFAULT 0")
 
-        # Table véhicules avec URL d'image
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS modeles_ve (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,7 +165,6 @@ class ReleveVEApp:
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 raw_data = urllib.request.urlopen(req, timeout=3).read()
                 im = Image.open(io.BytesIO(raw_data))
-                # Redimensionnement tout en gardant le ratio
                 im.thumbnail((160, 100), Image.Resampling.LANCZOS)
                 self.photo_vehicule = ImageTk.PhotoImage(im)
                 self.lbl_image.config(image=self.photo_vehicule, text="")
@@ -194,11 +193,11 @@ class ReleveVEApp:
     def ouvrir_parametres(self):
         win_param = tk.Toplevel(self.root)
         win_param.title("Paramètres du véhicule")
-        win_param.geometry("450x380")
+        win_param.geometry("500x420")
         win_param.configure(bg=SURFACE_COLOR)
         
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 225
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 190
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 250
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 210
         win_param.geometry(f"+{x}+{y}")
         win_param.transient(self.root)
         win_param.grab_set()
@@ -214,7 +213,7 @@ class ReleveVEApp:
         liste_noms = [f"{v[0]} {v[1]} ({v[2]} kWh)" for v in vehicules]
         liste_noms.append("Saisie manuelle...")
         
-        combo_vehicules = ttk.Combobox(win_param, values=liste_noms, state="readonly", width=40)
+        combo_vehicules = ttk.Combobox(win_param, values=liste_noms, state="readonly", width=45)
         combo_vehicules.pack(pady=10)
         
         frame_manuel = tk.Frame(win_param, bg=SURFACE_COLOR)
@@ -223,9 +222,16 @@ class ReleveVEApp:
         ent_capacite = tk.Entry(frame_manuel, width=10, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
         ent_capacite.grid(row=0, column=1, padx=5, pady=5, sticky="w")
         
-        tk.Label(frame_manuel, text="URL Image (Optionnel) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).grid(row=1, column=0, sticky="e", pady=5)
-        ent_url = tk.Entry(frame_manuel, width=30, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
+        tk.Label(frame_manuel, text="URL Image (Optionnelle) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).grid(row=1, column=0, sticky="e", pady=5)
+        ent_url = tk.Entry(frame_manuel, width=35, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
         ent_url.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
+        def chercher_web():
+            nom = "Peugeot e-208" if combo_vehicules.get() == "Saisie manuelle..." else combo_vehicules.get().split("(")[0]
+            url_recherche = f"https://duckduckgo.com/?q={nom.replace(' ', '+')}+voiture&iax=images&ia=images"
+            webbrowser.open(url_recherche)
+            
+        tk.Button(frame_manuel, text="🌐 Chercher une image sur le web", bg=BG_COLOR, fg=TEXT_MUTED, relief=tk.FLAT, bd=0, font=("Arial", 8), command=chercher_web).grid(row=2, column=1, sticky="w", pady=(0, 10))
 
         index_trouve = -1
         for i, nom in enumerate(liste_noms):
@@ -235,6 +241,9 @@ class ReleveVEApp:
                 
         if index_trouve >= 0:
             combo_vehicules.current(index_trouve)
+            ent_capacite.insert(0, str(vehicules[index_trouve][2]))
+            ent_url.insert(0, vehicules[index_trouve][3])
+            frame_manuel.pack(pady=10)
         else:
             combo_vehicules.set("Saisie manuelle...")
             ent_capacite.insert(0, str(self.capacite_batterie))
@@ -242,35 +251,36 @@ class ReleveVEApp:
             frame_manuel.pack(pady=10)
 
         def sur_changement(event):
+            frame_manuel.pack(pady=10)
+            ent_capacite.delete(0, tk.END)
+            ent_url.delete(0, tk.END)
+            
             if combo_vehicules.get() == "Saisie manuelle...":
-                frame_manuel.pack(pady=10)
-                ent_capacite.delete(0, tk.END)
                 ent_capacite.insert(0, str(self.capacite_batterie))
-                ent_url.delete(0, tk.END)
                 ent_url.insert(0, self.vehicule_image_url)
             else:
-                frame_manuel.pack_forget()
+                idx = combo_vehicules.current()
+                ent_capacite.insert(0, str(vehicules[idx][2]))
+                ent_url.insert(0, vehicules[idx][3])
 
         combo_vehicules.bind("<<ComboboxSelected>>", sur_changement)
 
         def sauvegarder():
-            choix = combo_vehicules.get()
-            if choix == "Saisie manuelle...":
-                try:
-                    nouvelle_cap = float(ent_capacite.get().replace(',', '.'))
-                    nouvelle_url = ent_url.get()
-                    self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom="Véhicule personnalisé", url_image=nouvelle_url)
-                except ValueError:
-                    messagebox.showwarning("Erreur", "Veuillez saisir une capacité valide.", parent=win_param)
-                    return
-            else:
-                idx = combo_vehicules.current()
-                nouvelle_cap = vehicules[idx][2]
-                nouvelle_url = vehicules[idx][3]
-                nom_vehicule = f"{vehicules[idx][0]} {vehicules[idx][1]}"
+            try:
+                nouvelle_cap = float(ent_capacite.get().replace(',', '.'))
+                nouvelle_url = ent_url.get()
+                
+                if combo_vehicules.get() == "Saisie manuelle...":
+                    nom_vehicule = "Véhicule personnalisé"
+                else:
+                    idx = combo_vehicules.current()
+                    nom_vehicule = f"{vehicules[idx][0]} {vehicules[idx][1]}"
+                    
                 self.sauvegarder_config(self.prix_kwh_defaut, capacite=nouvelle_cap, nom=nom_vehicule, url_image=nouvelle_url)
+            except ValueError:
+                messagebox.showwarning("Erreur", "Veuillez saisir une capacité valide.", parent=win_param)
+                return
             
-            # Mise à jour de l'UI
             self.lbl_nom_vehicule.config(text=self.vehicule_nom)
             self.lbl_cap_vehicule.config(text=f"Capacité utile : {self.capacite_batterie} kWh")
             self.charger_image_vehicule()
@@ -279,7 +289,7 @@ class ReleveVEApp:
             self.afficher_donnees()
             win_param.destroy()
 
-        tk.Button(win_param, text="Sauvegarder", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, bd=0, font=("Arial", 10, "bold"), command=sauvegarder, padx=15, pady=5).pack(pady=20)
+        tk.Button(win_param, text="Sauvegarder", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, bd=0, font=("Arial", 10, "bold"), command=sauvegarder, padx=15, pady=5).pack(pady=10)
 
     def afficher_a_propos(self, startup=False):
         win_propos = tk.Toplevel(self.root)
@@ -345,20 +355,20 @@ class ReleveVEApp:
         frame_info = tk.Frame(frame_header, bg=SURFACE_COLOR, bd=0)
         frame_info.pack(fill=tk.X)
         
-        self.lbl_image = tk.Label(frame_info, bg=SURFACE_COLOR, text="🚗", font=("Arial", 40), width=160)
-        self.lbl_image.pack(side=tk.LEFT, padx=(10, 15), pady=10)
+        btn_changer = tk.Button(frame_info, text="⚙️ Paramètres véhicule", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, font=("Arial", 9, "bold"), command=self.ouvrir_parametres, padx=10, pady=5)
+        btn_changer.place(relx=1.0, rely=0.0, anchor="ne", x=-10, y=10)
+
+        frame_centre = tk.Frame(frame_info, bg=SURFACE_COLOR)
+        frame_centre.pack(pady=10)
         
-        frame_texte_vehicule = tk.Frame(frame_info, bg=SURFACE_COLOR)
-        frame_texte_vehicule.pack(side=tk.LEFT, fill=tk.Y, pady=20)
+        self.lbl_image = tk.Label(frame_centre, bg=SURFACE_COLOR, text="🚗", font=("Arial", 40))
+        self.lbl_image.pack()
         
-        self.lbl_nom_vehicule = tk.Label(frame_texte_vehicule, text=self.vehicule_nom, bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 16, "bold"))
-        self.lbl_nom_vehicule.pack(anchor="w")
+        self.lbl_nom_vehicule = tk.Label(frame_centre, text=self.vehicule_nom, bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 16, "bold"))
+        self.lbl_nom_vehicule.pack(pady=(5, 0))
         
-        self.lbl_cap_vehicule = tk.Label(frame_texte_vehicule, text=f"Capacité utile : {self.capacite_batterie} kWh", bg=SURFACE_COLOR, fg=TEXT_MUTED, font=("Arial", 11))
-        self.lbl_cap_vehicule.pack(anchor="w", pady=(5,0))
-        
-        btn_changer = tk.Button(frame_info, text="⚙️ Changer de véhicule", bg=ACCENT_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, font=("Arial", 9, "bold"), command=self.ouvrir_parametres, padx=10, pady=5)
-        btn_changer.pack(side=tk.RIGHT, padx=20)
+        self.lbl_cap_vehicule = tk.Label(frame_centre, text=f"Capacité utile : {self.capacite_batterie} kWh", bg=SURFACE_COLOR, fg=TEXT_MUTED, font=("Arial", 11))
+        self.lbl_cap_vehicule.pack(pady=(0, 5))
 
         # --- 1. Zone des 2 Graphiques (En haut) ---
         frame_graphiques = tk.Frame(self.root, bg=BG_COLOR)
