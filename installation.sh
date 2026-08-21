@@ -25,7 +25,7 @@ mkdir -p "$INSTALL_DIR"
 
 # 4. Copie du script Python et attribution des droits d'exécution
 echo "⚙️ Copie du script..."
-cp charge_electrique.py "$INSTALL_DIR/"
+cp charge_electrique-v8.1.py "$INSTALL_DIR/"
 chmod +x "$INSTALL_DIR/charge_electrique-v8.1.py"
 
 # 5. Création du fichier .desktop pour le menu Linux Mint
