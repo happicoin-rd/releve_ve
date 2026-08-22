@@ -49,6 +49,10 @@ class ReleveVEApp:
         self.charger_config()
         self.initialiser_bdd()
         
+        # --- ACTIVATION DU CLIC DROIT SUR LES CHAMPS DE TEXTE ---
+        self.root.bind_class("Entry", "<Button-3>", self._afficher_menu_edition)
+        self.root.bind_class("TCombobox", "<Button-3>", self._afficher_menu_edition)
+        
         self.creer_menu()
         self.creer_interface()
         self.charger_image_vehicule()
@@ -58,6 +62,19 @@ class ReleveVEApp:
         self.dessiner_graphiques()
         
         self.root.after(100, lambda: self.afficher_a_propos(startup=True))
+
+    def _afficher_menu_edition(self, event):
+        # Création du menu contextuel standard pour les champs de texte
+        widget = event.widget
+        menu = tk.Menu(self.root, tearoff=0, bg=SURFACE_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
+        menu.add_command(label="✂️ Couper", command=lambda: widget.event_generate("<<Cut>>"))
+        menu.add_command(label="📋 Copier", command=lambda: widget.event_generate("<<Copy>>"))
+        menu.add_command(label="📋 Coller", command=lambda: widget.event_generate("<<Paste>>"))
+        
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def sauvegarde_automatique(self):
         if os.path.exists(DB_FILE):
