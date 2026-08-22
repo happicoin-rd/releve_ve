@@ -14,7 +14,7 @@ from PIL import Image, ImageTk
 
 # --- Informations sur l'application ---
 APP_NAME = "Suivi de Charge - Voiture Électrique"
-APP_VERSION = "v8.3"
+APP_VERSION = "v8.4"
 APP_DATE = "Août 2026"
 APP_AUTHOR = "Durand Joël"
 APP_EMAIL = "rd66lago@gmail.com"
@@ -75,7 +75,7 @@ class ReleveVEApp:
         self.prix_kwh_defaut = ""
         self.capacite_batterie = 46.0
         self.vehicule_nom = "Peugeot e-208 (136ch)"
-        self.vehicule_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Peugeot_208_B_e-208_Allure_front_view.jpg/320px-Peugeot_208_B_e-208_Allure_front_view.jpg"
+        self.vehicule_image_url = "https://upload.wikimedia.org/wikipedia/fr/thumb/9/9b/Logo_Peugeot_2021.png/240px-Logo_Peugeot_2021.png"
         
         if os.path.exists(CONFIG_FILE):
             try:
@@ -145,13 +145,13 @@ class ReleveVEApp:
         cursor.execute("SELECT COUNT(*) FROM modeles_ve")
         if cursor.fetchone()[0] == 0:
             vehicules_ref = [
-                ("Peugeot", "e-208 (136ch)", 46.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Peugeot_208_B_e-208_Allure_front_view.jpg/320px-Peugeot_208_B_e-208_Allure_front_view.jpg"),
-                ("Peugeot", "e-208 (156ch)", 48.1, "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Peugeot_208_B_e-208_Allure_front_view.jpg/320px-Peugeot_208_B_e-208_Allure_front_view.jpg"),
-                ("Renault", "Zoe ZE50", 52.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Renault_Zoe_in_Baden-Baden_28.02.2021.jpg/320px-Renault_Zoe_in_Baden-Baden_28.02.2021.jpg"),
-                ("Renault", "Megane E-Tech", 60.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/Renault_Megane_E-Tech_1X7A6263.jpg/320px-Renault_Megane_E-Tech_1X7A6263.jpg"),
-                ("Tesla", "Model 3 Prop.", 57.5, "https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/2019_Tesla_Model_3_Performance_AWD_Front.jpg/320px-2019_Tesla_Model_3_Performance_AWD_Front.jpg"),
-                ("Dacia", "Spring", 26.8, "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c9/Dacia_Spring_1X7A6107.jpg/320px-Dacia_Spring_1X7A6107.jpg"),
-                ("MG", "MG4 Standard", 51.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/5/52/MG_4_EV_Excite_Front.jpg/320px-MG_4_EV_Excite_Front.jpg")
+                ("Peugeot", "e-208 (136ch)", 46.0, "https://upload.wikimedia.org/wikipedia/fr/thumb/9/9b/Logo_Peugeot_2021.png/240px-Logo_Peugeot_2021.png"),
+                ("Peugeot", "e-208 (156ch)", 48.1, "https://upload.wikimedia.org/wikipedia/fr/thumb/9/9b/Logo_Peugeot_2021.png/240px-Logo_Peugeot_2021.png"),
+                ("Renault", "Zoe ZE50", 52.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Renault_2021_Text.svg/256px-Renault_2021_Text.svg.png"),
+                ("Renault", "Megane E-Tech", 60.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Renault_2021_Text.svg/256px-Renault_2021_Text.svg.png"),
+                ("Tesla", "Model 3 Prop.", 57.5, "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bb/Tesla_T_symbol.svg/200px-Tesla_T_symbol.svg.png"),
+                ("Dacia", "Spring", 26.8, "https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/Dacia_Logo_2021.svg/256px-Dacia_Logo_2021.svg.png"),
+                ("MG", "MG4 Standard", 51.0, "https://upload.wikimedia.org/wikipedia/commons/thumb/7/77/MG_Motor_logo_2021.svg/200px-MG_Motor_logo_2021.svg.png")
             ]
             cursor.executemany("INSERT INTO modeles_ve (marque, modele, capacite_utile, image_url) VALUES (?, ?, ?, ?)", vehicules_ref)
 
@@ -165,13 +165,14 @@ class ReleveVEApp:
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 raw_data = urllib.request.urlopen(req, timeout=3).read()
                 im = Image.open(io.BytesIO(raw_data))
-                im.thumbnail((160, 100), Image.Resampling.LANCZOS)
+                # Taille ajustée pour un logo (plus carré)
+                im.thumbnail((120, 120), Image.Resampling.LANCZOS)
                 self.photo_vehicule = ImageTk.PhotoImage(im)
                 self.lbl_image.config(image=self.photo_vehicule, text="")
             except Exception as e:
-                self.lbl_image.config(image='', text="🚗", font=("Arial", 40))
+                self.lbl_image.config(image='', text="🏷️", font=("Arial", 40))
         else:
-            self.lbl_image.config(image='', text="🚗", font=("Arial", 40))
+            self.lbl_image.config(image='', text="🏷️", font=("Arial", 40))
 
     def creer_menu(self):
         menubar = tk.Menu(self.root, bg=SURFACE_COLOR, fg=TEXT_COLOR, bd=0, relief=tk.FLAT)
@@ -193,10 +194,10 @@ class ReleveVEApp:
     def ouvrir_parametres(self):
         win_param = tk.Toplevel(self.root)
         win_param.title("Paramètres du véhicule")
-        win_param.geometry("500x420")
+        win_param.geometry("520x420")
         win_param.configure(bg=SURFACE_COLOR)
         
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 250
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 260
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 210
         win_param.geometry(f"+{x}+{y}")
         win_param.transient(self.root)
@@ -222,16 +223,18 @@ class ReleveVEApp:
         ent_capacite = tk.Entry(frame_manuel, width=10, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
         ent_capacite.grid(row=0, column=1, padx=5, pady=5, sticky="w")
         
-        tk.Label(frame_manuel, text="URL Image (Optionnelle) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).grid(row=1, column=0, sticky="e", pady=5)
+        tk.Label(frame_manuel, text="URL du Logo (Optionnelle) :", bg=SURFACE_COLOR, fg=TEXT_COLOR).grid(row=1, column=0, sticky="e", pady=5)
         ent_url = tk.Entry(frame_manuel, width=35, bg=BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT)
         ent_url.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
         def chercher_web():
-            nom = "Peugeot e-208" if combo_vehicules.get() == "Saisie manuelle..." else combo_vehicules.get().split("(")[0]
-            url_recherche = f"https://duckduckgo.com/?q={nom.replace(' ', '+')}+voiture&iax=images&ia=images"
+            nom = combo_vehicules.get()
+            # On extrait juste la marque pour la recherche de logo
+            marque = "Peugeot" if nom == "Saisie manuelle..." else nom.split(" ")[0]
+            url_recherche = f"https://duckduckgo.com/?q=logo+{marque}+png&iax=images&ia=images"
             webbrowser.open(url_recherche)
             
-        tk.Button(frame_manuel, text="🌐 Chercher une image sur le web", bg=BG_COLOR, fg=TEXT_MUTED, relief=tk.FLAT, bd=0, font=("Arial", 8), command=chercher_web).grid(row=2, column=1, sticky="w", pady=(0, 10))
+        tk.Button(frame_manuel, text="🌐 Chercher un logo sur le web", bg=BG_COLOR, fg=TEXT_MUTED, relief=tk.FLAT, bd=0, font=("Arial", 8), command=chercher_web).grid(row=2, column=1, sticky="w", pady=(0, 10))
 
         index_trouve = -1
         for i, nom in enumerate(liste_noms):
@@ -318,9 +321,9 @@ class ReleveVEApp:
             "Cette application permet d'enregistrer et d'analyser vos recharges "
             "de véhicule électrique en toute simplicité :\n\n"
             "Nouveautés Récentes :\n"
-            "  • [v8.3] Refonte du tableau de bord avec affichage de la photo et des détails du véhicule.\n"
+            "  • [v8.4] Intégration des logos officiels constructeurs au tableau de bord pour un affichage plus propre.\n"
             "  • [v8.2] Base de données multi-véhicules intégrée.\n"
-            "  • [v8.2] Calcul de consommation (kWh/100km) ultra-précis basé sur la capacité utile de la batterie du véhicule sélectionné.\n\n"
+            "  • [v8.2] Calcul de consommation (kWh/100km) ultra-précis basé sur la capacité utile de la batterie.\n\n"
             "Fonctionnalités de base :\n"
             "  • Saisie du taux de charge initial et final (en %)\n"
             "  • Filtrage des relevés par mois avec statistiques adaptées\n"
@@ -361,7 +364,7 @@ class ReleveVEApp:
         frame_centre = tk.Frame(frame_info, bg=SURFACE_COLOR)
         frame_centre.pack(pady=10)
         
-        self.lbl_image = tk.Label(frame_centre, bg=SURFACE_COLOR, text="🚗", font=("Arial", 40))
+        self.lbl_image = tk.Label(frame_centre, bg=SURFACE_COLOR, text="🏷️", font=("Arial", 40))
         self.lbl_image.pack()
         
         self.lbl_nom_vehicule = tk.Label(frame_centre, text=self.vehicule_nom, bg=SURFACE_COLOR, fg=TEXT_COLOR, font=("Arial", 16, "bold"))
