@@ -22,6 +22,6 @@ de véhicule électrique en toute simplicité :
 
 - [ ] **Paquets Debian (`.deb`) :** Création de paquets d'installation pour une intégration native sous Linux (Debian, Ubuntu, Linux Mint).
 - [ ] **Exécutable Windows (`.exe`) :** Génération d'un exécutable autonome pour faciliter le déploiement sur les environnements Windows.
-- [ ] **Refonte graphique :** Modernisation de l'interface utilisateur pour un rendu plus épuré et ergonomique.
+- [ ] **Refonte graphique :** Modernisation de l'interface utilisateur pour un rendu plus épuré et ergonomique.( en cours )
 
         
