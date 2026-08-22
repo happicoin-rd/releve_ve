@@ -19,8 +19,7 @@ de véhicule électrique en toute simplicité :
 
     ## 🚀 Prochaines versions (Roadmap)
 
-- [ ] **Environnement Python :** Réécriture du calcul de la consommation kWh/100km erronée).
-- [ ] **Environnement Python :** Mise en place d'une installation propre via `pip` et gestion des dépendances par environnement virtuel (`venv`).
+
 - [ ] **Paquets Debian (`.deb`) :** Création de paquets d'installation pour une intégration native sous Linux (Debian, Ubuntu, Linux Mint).
 - [ ] **Exécutable Windows (`.exe`) :** Génération d'un exécutable autonome pour faciliter le déploiement sur les environnements Windows.
 - [ ] **Refonte graphique :** Modernisation de l'interface utilisateur pour un rendu plus épuré et ergonomique.
