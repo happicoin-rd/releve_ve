@@ -32,8 +32,8 @@ python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install fpdf Pillow
 
 # Copie du script principal à son emplacement définitif
-cp "$SCRIPT_SOURCE" "$APP_DIR/bin/charge_electrique.py"
-chmod +x "$APP_DIR/bin/charge_electrique.py"
+cp "$SCRIPT_SOURCE" "$APP_DIR/bin/charge_electrique-v8.5.py"
+chmod +x "$APP_DIR/bin/charge_electrique-v8.5.py"
 
 # 4. Création du raccourci dans le menu des applications
 echo -e "\n[4/4] Création du raccourci dans le menu système..."
@@ -45,7 +45,7 @@ Version=1.0
 Type=Application
 Name=Suivi Charge VE
 Comment=Gestion de la consommation de la voiture électrique
-Exec=$APP_DIR/venv/bin/python $APP_DIR/bin/charge_electrique.py
+Exec=$APP_DIR/venv/bin/python $APP_DIR/bin/charge_electrique-v8.5.py
 Icon=utilities-system-monitor
 Terminal=false
 Categories=Utility;Finance;
