@@ -1,50 +1,59 @@
-
 #!/bin/bash
 
-echo "========================================="
-echo "   Installation de Relevé VE"
-echo "========================================="
+echo "==============================================="
+echo " Installation de Suivi de Charge VE (v8.6)"
+echo "==============================================="
 
-# 1. Vérification de la présence du script Python
-if [ ! -f "charge_electrique-v8.6.py" ]; then
-    echo "❌ Erreur : Le fichier 'charge_voiture_electrique.py' est introuvable."
-    echo "Veuillez lancer ce script d'installation depuis le dossier contenant charge_electrique.py."
+# Vérification du fichier Python
+SCRIPT_SOURCE="charge_electrique-v8.6.py"
+if [ ! -f "$SCRIPT_SOURCE" ]; then
+    echo "❌ Erreur : Le fichier '$SCRIPT_SOURCE' est introuvable."
+    echo "Assurez-vous que ce script d'installation est dans le même dossier que le fichier Python."
     exit 1
 fi
 
-# 2. Installation des dépendances système
-echo -e "\n📦 Installation des dépendances (Tkinter et FPDF)..."
-echo "Votre mot de passe administrateur va être demandé."
-sudo apt update
-sudo apt install -y python3-tk python3-fpdf
+# 1. Dépendances système (Demande le mot de passe sudo)
+echo -e "\n[1/4] Installation des paquets système requis..."
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv python3-tk python3-pil.imagetk
 
-# 3. Création du dossier d'installation caché dans le répertoire utilisateur
-INSTALL_DIR="$HOME/.local/share/ReleveVE"
-echo -e "\n📁 Création du répertoire $INSTALL_DIR..."
-mkdir -p "$INSTALL_DIR"
+# 2. Préparation des répertoires de l'application
+APP_DIR="$HOME/.local/share/ReleveVE"
+echo -e "\n[2/4] Création de l'arborescence dans $APP_DIR..."
+mkdir -p "$APP_DIR/bin"
+mkdir -p "$HOME/.local/share/applications"
 
-# 4. Copie du script Python et attribution des droits d'exécution
-echo "⚙️ Copie du script..."
-cp charge_electrique-v8.6.py "$INSTALL_DIR/"
-chmod +x "$INSTALL_DIR/charge_electrique-v8.6.py"
+# 3. Environnement virtuel et dépendances Python
+echo -e "\n[3/4] Configuration de l'environnement virtuel Python isolé..."
+python3 -m venv "$APP_DIR/venv"
 
-# 5. Création du fichier .desktop pour le menu Linux Mint
-DESKTOP_FILE="$HOME/.local/share/applications/charge_electrique.desktop"
-echo "📝 Création du raccourci dans le menu ($DESKTOP_FILE)..."
+# Installation des paquets PIP dans le venv
+"$APP_DIR/venv/bin/pip" install --upgrade pip
+"$APP_DIR/venv/bin/pip" install fpdf Pillow
 
-cat > "$DESKTOP_FILE" << EOF
+# Copie du script principal à son emplacement définitif
+cp "$SCRIPT_SOURCE" "$APP_DIR/bin/charge_electrique-v8.6.py"
+chmod +x "$APP_DIR/bin/charge_electrique-v8.6.py"
+
+# 4. Création du raccourci dans le menu des applications
+echo -e "\n[4/4] Création du raccourci dans le menu système..."
+DESKTOP_FILE="$HOME/.local/share/applications/suivi-charge-ve.desktop"
+
+cat > "$DESKTOP_FILE" << EOL
 [Desktop Entry]
-Name=Relevés VE
-Comment=Suivi de consommation de la voiture électrique
-Exec=python3 $INSTALL_DIR/charge_electrique-v8.6.py
+Version=1.0
+Type=Application
+Name=Suivi Charge VE
+Comment=Gestion de la consommation de la voiture électrique
+Exec=$APP_DIR/venv/bin/python $APP_DIR/bin/charge_electrique-v8.6.py
 Icon=utilities-system-monitor
 Terminal=false
-Type=Application
 Categories=Utility;Finance;
-EOF
+EOL
 
-# 6. Rafraîchissement des menus (Cinnamon / Mate / XFCE)
-update-desktop-database "$HOME/.local/share/applications/" 2>/dev/null
+chmod +x "$DESKTOP_FILE"
 
-echo -e "\n✅ Installation terminée avec succès !"
-echo "Vous pouvez maintenant trouver 'Relevés VE' dans le menu des applications de Linux Mint."
+echo -e "\n==============================================="
+echo " ✅ Installation terminée avec succès !"
+echo " Vous pouvez maintenant lancer 'Suivi Charge VE' directement depuis le menu de votre bureau."
+echo "==============================================="
